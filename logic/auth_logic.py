@@ -1,8 +1,9 @@
 from flask import Blueprint, jsonify
 from functions.database import cursor, conn
 import bcrypt
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
 import pytz
+import jwt
 
 auth_blueprint = Blueprint('auth', __name__)
 now = datetime.now()
@@ -27,7 +28,7 @@ def register(request):
     cursor.execute("select username, email_address from customer c where email_address = %s", (email,))
     mail = cursor.fetchone()
     
-    cursor.execute("select count(id) from customer c where date_trunc('day', created_at) = current_date")
+    cursor.execute("select count(*) from customer c where date_trunc('day', created_at) = current_date")
     curr_num = cursor.fetchone()[0] + 1
     
     if curr_num < 10:
@@ -62,4 +63,36 @@ def register(request):
     except Exception as e:
         conn.rollback()  # Mengembalikan transaksi jika ada kesalahan
         return jsonify({'message': 'Failed to register user.', 'error': str(e)})
+
+def login(request, app):
+    auth = request.get_json()
+    username = auth.get('username')
+    password = auth.get('password').encode('utf-8')
+    
+    cursor.execute("select username, password  from customer c where username = %s", (username,))
+    user = cursor.fetchone()
+    
+    if not user or not bcrypt.checkpw(password, user[1].encode('utf-8')):
+        return jsonify({
+            'message':'Username atau password salah'
+        })
+    
+    utc_exp = datetime.utcnow() + timedelta(minutes=30)
+    utc_timezone = pytz.timezone('UTC')
+    wib_timezone = pytz.timezone('Asia/Jakarta')
+    utc_exp = utc_timezone.localize(utc_exp)
+    wib_exp = utc_exp.astimezone(wib_timezone)
+    
+    # Membuat payload token dengan waktu expired dalam WIB
+    payload = {
+        'username': user[0],
+        'exp': wib_exp
+    }
+    token = jwt.encode(payload, app.config['SECRET_KEY'], algorithm='HS256')
+    return jsonify({
+        'message': 'Login berhasil!', 
+        'token': token
+    })
+    
+    
     
